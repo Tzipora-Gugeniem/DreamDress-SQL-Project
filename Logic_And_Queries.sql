@@ -1,271 +1,283 @@
------------------------------פעולות על מסד נתונים 
-----------------------------------------טריגר-------------------------------------------------------
----הפעלה: בעת הכנסת תיקון חדש לטבלת תיקונים
----טריגר המעדכן עבור התיקון שהוכנס את התופרת המתאימה ביותר
-CREATE trigger  [dbo].[matchDm] on [dbo].[fixes]after insert as
-begin
-declare @des varchar(100), @fixid smallint,@sk varchar(30)
-select @des=[describe],@fixid=[fixId] from inserted 
- --:יבדוק מה סוג תיקון ויעדכן בטבלה בהתאם
- --תוספת ורוכסנים -מורכב
- --מכפלת בלבד -פשוט כל סוגי הצרות-סטנדרטי
- -- יעדכן בטבלה את התופרת שהתמחות שלה תואמת לסוג התיקון:מורכב\פשןט\סטנדרטי\ 
- if (  @des like '%תוספת%' or @des like '%רוכסן%')
- begin
- update fixes set [typeFix]='מורכב' where [fixId]=@fixid
- set @sk='מורכב'
- end
- else if ( @des like '%הצרה%')
- begin
- update fixes set [typeFix]='סטנדרטי' where [fixId]=@fixid
- set @sk='סטנדרטי'
- end
- else if ( @des like 'מכפלת%')
-  begin
-   update fixes set [typeFix]='פשוט' where [fixId]=@fixid
- set @sk='פשוט'
- end
-  else
-  begin
-  --יש לעדכן שוב אם תאור התיקון לא הוכנס בצורה הנדרשת
-  print '..הכנסי תאור תיקון בצורה תקנית: מכפלת...,הצרה..,תוספת..,רוכסן'
-  rollback
-  end
+-----------------------------------------------------------------------------------------
+-- DATABASE OPERATIONS: DREAMDRESS PROJECT
+-----------------------------------------------------------------------------------------
 
- --יביא תופרת אחת אותה יעדכן בטבלה בעמודה של התופרות 
- --יבדוק האם המומחיות של התופרת מתאימה לסוג התיקון 
- declare @dm smallint 
-select @dm= (select [DmId] from   
- (--בוחר את התופרת הראשונה שמתאימה לסוג התיקון ויש לה  את כמות הקטנה ביותר של התיקונים
- select top(1) [dbo].[DressMakers].[DmId],count([fixId])as'כמות תיקונים' 
-from [dbo].[fixes] right join [dbo].[DressMakers]
-on DressMakers.DmId=[dbo].[fixes].[DmId]
-where [DmSkill]=@sk 
-group by [dbo].[DressMakers].[DmId] 
-order by 'כמות תיקונים' 
-  )q1
- )
-update fixes set [DmId]=@dm where [fixId]=@fixid
- --כעת יעדכן בטבלה את התופרת המתאימה ביותר  את התופרת המתאימה ביותר
- end 
+-----------------------------------------------------------------------------------------
+-- TRIGGER SECTION
+-----------------------------------------------------------------------------------------
+
+--- Trigger: AssignSeamstress
+--- Event: After an insert into the [fixes] (Alterations) table.
+--- Description: This trigger automatically categorizes the alteration type and 
+--- assigns the most suitable seamstress based on their skill and current workload.
+
+CREATE TRIGGER [dbo].[matchDm] ON [dbo].[fixes] AFTER INSERT AS
+BEGIN
+    DECLARE @des VARCHAR(100), @fixid SMALLINT, @sk VARCHAR(30)
+    SELECT @des = [describe], @fixid = [fixId] FROM inserted 
+
+    -- 1. Check alteration description and set the complexity type accordingly:
+    -- Additions and Zippers -> 'Complex'
+    -- Hemming only -> 'Simple'
+    -- All types of narrowing -> 'Standard'
+    
+    IF (@des LIKE N'%׳×׳•׳¡׳₪׳×%' OR @des LIKE N'%׳¨׳•׳›׳¡׳%')
+    BEGIN
+        UPDATE fixes SET [typeFix] = 'Complex' WHERE [fixId] = @fixid
+        SET @sk = 'Complex'
+    END
+    ELSE IF (@des LIKE N'%׳”׳¦׳¨׳”%')
+    BEGIN
+        UPDATE fixes SET [typeFix] = 'Standard' WHERE [fixId] = @fixid
+        SET @sk = 'Standard'
+    END
+    ELSE IF (@des LIKE N'׳׳›׳₪׳׳×%')
+    BEGIN
+        UPDATE fixes SET [typeFix] = 'Simple' WHERE [fixId] = @fixid
+        SET @sk = 'Simple'
+    END
+    ELSE
+    BEGIN
+        -- Rollback if the description does not match required keywords
+        PRINT 'Error: Please enter a valid description (Hem, Narrowing, Addition, Zipper)'
+        ROLLBACK
+        RETURN
+    END
+
+    -- 2. Find and assign the best-suited seamstress:
+    -- Selects the first seamstress whose skill matches the complexity 
+    -- and has the lowest number of current assignments.
+    
+    DECLARE @dm SMALLINT 
+    SELECT @dm = (
+        SELECT [DmId] FROM   
+        (
+            SELECT TOP(1) [dbo].[DressMakers].[DmId], COUNT([fixId]) AS 'Workload' 
+            FROM [dbo].[fixes] RIGHT JOIN [dbo].[DressMakers]
+            ON DressMakers.DmId = [dbo].[fixes].[DmId]
+            WHERE [DmSkill] = @sk 
+            GROUP BY [dbo].[DressMakers].[DmId] 
+            ORDER BY 'Workload' ASC
+        ) AS q1
+    )
+
+    UPDATE fixes SET [DmId] = @dm WHERE [fixId] = @fixid
+    -- Seamstress assignment completed.
+END 
 GO
--------------------------------פרוצדורות----------------------------------
-------------UPDATETURNS
---פרוצדורה זו מעדכנת תורים  
---באופן רגיל מעדכנת תורים לעוד חודשיים 
---אלא אם כן הוכנס תאריך אחר
---כמו כן מוחקת תורים שעבר מהם יותר משבוע ת  
 
-alter procedure updateTurns(@date date ) as
-begin 
-delete from turns where [date]<dateadd(day,-7,getdate())
+-----------------------------------------------------------------------------------------
+-- STORED PROCEDURES SECTION
+-----------------------------------------------------------------------------------------
 
-declare @d date
---הפרוצודורה מייצרת רק תורים שעדיין לא קיימים-החל מהתאריך האחרון שכבר מופיע בטבלת תורים
-set @d=dateadd(day,1,(select top 1 [date] from [dbo].[turns] order by [date] desc))
---במקרה ולא קיימים כלל תורים בטבלה
-if(@d is null)
-set @d=getdate()
-declare @m time
-if @date is null
-set @date=DateAdd(month,2,getDate())
-while(@d<@date)
-begin
---  שעות הפעילות מ8:30עד 4:00
-set @m='08:30:00'
-while(@m<'16:00:00')
-begin
---הכנסת תורים
-insert into[dbo].[turns]([date],[time])values(@d,@m)
-set @m=DATEADD(minute,30,@m)
-end
-set @d=DateAdd(day,1,@d)
---שישי שבת הסלון סגור
-if(datepart(dw,@d)=6)
-begin
-set @d=DateAdd(day,2,@d)
-end
-end
-DBCC CHECKIDENT([turns],RESEED,0)
-end
---שורת הפעלה
-exec updateTurns NULL----יעדכן לחדשיים NULL הוכנס
-     select * from turns 
-	 delete  from turns ---ניתן להכנס כל תאריך אחר
------------- פרוצדורה 2
---פרוצדורה  מעדכנת תור לקיחה
----החל משבוע לפני החתונה התאריך הראשון שפנוי יעודכן עבור הכלה כתור ללקיחת השמלה
-alter procedure taketurn(@brideid smallint) as
-begin
-declare @date date
-declare @turnId smallint
-set @date=(select [DateEven] from [dbo].[BridesDetails]where [BrideId]=@brideid )
-set @date=dateadd(day,-7,@date)
------בודק האם התאריך המבוקש אכן קיים בטבלת תורים
-if (dateadd(day,-7,@date)>(select top 1 [date] from[dbo].[turns] order by [date] desc))
----אם לא- יצור תורים עד התאריך המבוקש
-begin 
-exec updateTurns @date
-end
-set @turnId=(select top 1 [TurnId] from [dbo].[turns] where [date]>dateadd(day,-7,@date) and brideId is null)
+------------ PROCEDURE 1: updateTurns
+-- Description: Generates future appointment slots and cleans up old records.
+-- 1. Deletes appointments older than one week.
+-- 2. Generates new slots for the next two months (unless a different date is specified).
 
-update [dbo].[turns] set [brideId]=@brideid   where  [TurnId]=@turnId
-update [dbo].[turns] set [type]='לקחת'  where  [TurnId]=@turnId
-end
+ALTER PROCEDURE updateTurns(@date DATE) AS
+BEGIN 
+    -- Remove outdated appointments
+    DELETE FROM turns WHERE [date] < DATEADD(DAY, -7, GETDATE())
 
----שורת הרצה 
-exec taketurn--קוד כלה-
-----------------------------------------סמן 
---הפעלת סמן-מעדכן תורים עבור כל הכלות שעדיין אין להן תור ללקיחת שמלה
-declare @brideid smallint  
-declare crs cursor
-for select [BrideId] from [dbo].[BridesDetails] 
----רק לכלות שעדין לא מעודכן להן תור לקחת את השמלה 
-where [brideId] not in(select [brideId] from [dbo].[turns] where [type]='לקחת' )
-open crs
-fetch next from   crs into @brideid
-while @@FETCH_STATUS=0
-begin
-----שולח את קוד הכלה לפרוצדורה שתעדכן עבורה תור ללקיחת השמלה 
-exec taketurn @brideid 
-fetch next from crs into @brideid
-end
-close crs
-deallocate crs
+    DECLARE @d DATE
+    -- Start generating from the day after the last existing appointment
+    SET @d = DATEADD(DAY, 1, (SELECT TOP 1 [date] FROM [dbo].[turns] ORDER BY [date] DESC))
+    
+    -- If table is empty, start from today
+    IF (@d IS NULL) SET @d = GETDATE()
+    
+    DECLARE @m TIME
+    -- Default timeframe: 2 months from today
+    IF @date IS NULL SET @date = DATEADD(MONTH, 2, GETDATE())
 
-------------------------------------פונקציות-----------------------------------------------
----------------פונקציה סקלארית
-----פונקציה המחשבת הכנסות לחודש המבוקש
-alter function [dbo].[gain](@month smallint)returns varchar(50) as
-begin
-declare @sum int
---יוציא עבור החודש המבוקש את סך  התשלום שהתקבל משמלות שנלקחו בחודש זה 
-set @sum=(select sum([DressPrice]) from   [dbo].[Dresses] join [dbo].[orders]
- on [dbo].[orders].[DressId]=[dbo].[Dresses].[DressId]
- join  [dbo].[BridesDetails]
- on   [dbo].[BridesDetails].BrideId=[dbo].[orders].BrideId
- where month([DateEven])=@month) 
+    WHILE (@d < @date)
+    BEGIN
+        -- Business hours: 08:30 to 16:00
+        SET @m = '08:30:00'
+        WHILE (@m < '16:00:00')
+        BEGIN
+            -- Insert 30-minute slots
+            INSERT INTO [dbo].[turns]([date], [time]) VALUES (@d, @m)
+            SET @m = DATEADD(MINUTE, 30, @m)
+        END
+        
+        SET @d = DATEADD(DAY, 1, @d)
+        -- Salon closed on Friday and Saturday
+        IF (DATEPART(DW, @d) = 6) SET @d = DATEADD(DAY, 2, @d)
+    END
+    
+    -- Reset Identity for clean IDs
+    DBCC CHECKIDENT([turns], RESEED, 0)
+END
+GO
+
+------------ PROCEDURE 2: taketurn
+-- Description: Assigns a "Pickup Appointment" for the bride.
+-- Starting one week before the wedding, the first available slot is assigned to the bride.
+
+ALTER PROCEDURE taketurn(@brideid SMALLINT) AS
+BEGIN
+    DECLARE @date DATE
+    DECLARE @turnId SMALLINT
+    
+    SELECT @date = [DateEven] FROM [dbo].[BridesDetails] WHERE [BrideId] = @brideid 
+    SET @date = DATEADD(DAY, -7, @date)
+
+    -- Check if the target date exists in the appointments table
+    IF (@date > (SELECT TOP 1 [date] FROM [dbo].[turns] ORDER BY [date] DESC))
+    BEGIN 
+        -- Generate appointments up to the required date if missing
+        EXEC updateTurns @date
+    END
+
+    -- Find the first available slot on or after the target date
+    SET @turnId = (SELECT TOP 1 [TurnId] FROM [dbo].[turns] WHERE [date] >= @date AND brideId IS NULL)
+
+    -- Assign the bride to the slot and mark it as 'Pickup'
+    UPDATE [dbo].[turns] SET [brideId] = @brideid WHERE [TurnId] = @turnId
+    UPDATE [dbo].[turns] SET [type] = 'Pickup' WHERE [TurnId] = @turnId
+END
+GO
+
+-----------------------------------------------------------------------------------------
+-- CURSOR SECTION
+-----------------------------------------------------------------------------------------
+
+-- Cursor Description: Updates pickup appointments for all brides who don't have one scheduled yet.
+DECLARE @brideid SMALLINT  
+DECLARE crs CURSOR FOR 
+    SELECT [BrideId] FROM [dbo].[BridesDetails] 
+    WHERE [brideId] NOT IN (SELECT [brideId] FROM [dbo].[turns] WHERE [type] = 'Pickup')
+
+OPEN crs
+FETCH NEXT FROM crs INTO @brideid
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    -- Call the taketurn procedure for each bride
+    EXEC taketurn @brideid 
+    FETCH NEXT FROM crs INTO @brideid
+END
+CLOSE crs
+DEALLOCATE crs
+GO
+
+-----------------------------------------------------------------------------------------
+-- FUNCTIONS SECTION
+-----------------------------------------------------------------------------------------
+
+--------------- Scalar Function: gain
+-- Description: Calculates total revenue for a specific month based on dresses taken during that period.
+
+ALTER FUNCTION [dbo].[gain](@month SMALLINT) RETURNS VARCHAR(100) AS
+BEGIN
+    DECLARE @sum INT
+    -- Sum of dress prices for weddings occurring in the specified month
+    SET @sum = (
+        SELECT SUM([DressPrice]) FROM [dbo].[Dresses] 
+        JOIN [dbo].[orders] ON [dbo].[orders].[DressId] = [dbo].[Dresses].[DressId]
+        JOIN [dbo].[BridesDetails] ON [dbo].[BridesDetails].BrideId = [dbo].[orders].BrideId
+        WHERE MONTH([DateEven]) = @month
+    ) 
  
- if (@sum is null)----במקרה ולא נרשמו רווחים בחודש זה
-  begin
-    return datename(month,dateadd(month,@month,-1))+' לא נרשמו רווחים בחודש'
-	 end
-return 'ש"ח'+convert(varchar,@sum)+' :'+datename(month,dateadd(month,@month,-1))+' הכנסות וטו בחודש'
-end
--------------------שורת הרצה 
-print dbo.gain(3)
-      -----מס' חודש----)
+    IF (@sum IS NULL) -- Case: No revenue recorded
+    BEGIN
+        RETURN 'No revenue recorded for ' + DATENAME(MONTH, DATEADD(MONTH, @month, -1))
+    END
+    
+    RETURN 'Total Revenue for ' + DATENAME(MONTH, DATEADD(MONTH, @month, -1)) + ': ' + CONVERT(VARCHAR, @sum) + ' ILS'
+END
+GO
 
+--------------- Table-Valued Function: favoriteDress
+-- Description: Displays dresses according to customer requirements (Date, Categories, Price).
 
-----------------------------------פונקציות המחזירות ערך טבלאי------------------------------
-----פונקציה המציגה שמלות עפ"י דרישות הלקוחה
-------הלקוחה מכניסה תאריך, קטגוריות רצויות ומחיר
------------חובה להכניס תאריך ומחיר
------קטגוריות ניתן להכניס עד 3 רצויות
--------------לא הוכנס קט' יחזיר הכל
-----פונקציה זו היא פונקציית עזר לפונקציה הראשית
- alter function temp(@kategory1 smallint,@kategory2 smallint,@kategory3 smallint,@price smallint)returns @t table
-(ktId smallint,
-rowNumber smallint,
-dressId smallint,
-dressName varchar(50),
-dressPrice smallint,
-arivial varchar(20)
-) as
-begin
---במקרה ולא הוכנסה קטגוריה כלל תתקבל רשימה של כל השמלות המתאימות לתאריך ולמחיר
-if (@kategory1 is null and @kategory2 is null and @kategory3 is null) 
-begin
-insert into @t
-select [ktId],ROW_NUMBER()--ימספר עבור כל קטגוריה את השמלות המתאימות לה
-over(partition by[ktId]order by[dateCome] desc)dNumber,[dressId],[dressName],[dressPrice],
---הפונקציה תציין עבור כל שמלה את מידת חדשנותה
-case
-when datediff(MONTH,[dateCome],getdate())<2 then'השקה ראשונה'
-when datediff(MONTH,[dateCome],getdate()) between 2 and 4then'עדכני'
-when datediff(MONTH,[dateCome],getdate()) between 4 and 8 then'די חדש'
-when datediff(MONTH,[dateCome],getdate()) between 8 and 12 then'עונה קודמת'
-else 'עונות קודמת'
-end 'arivial'
- from[dbo].[dresses] 
- --הצגת רק שמלות שהמחיר מתאימים לדרישות הלקוח
- where @price between ([dressPrice]-1000) and ([dressPrice]+1000)
- end
-else
-begin
-insert into @t
-select [ktId],ROW_NUMBER()--ימספר עבור כל קטגוריה את השמלות המתאימות לה
-over(partition by[ktId]order by[dateCome] desc)dNumber,[dressId],[dressName],[dressPrice],
---הפונקציה תציין עבור כל שמלה את מידת חדשנותה
-case
-when datediff(MONTH,[dateCome],getdate())<2 then'השקה ראשונה'
-when datediff(MONTH,[dateCome],getdate()) between 2 and 4then'עדכני'
-when datediff(MONTH,[dateCome],getdate()) between 4 and 8 then'די חדש'
-when datediff(MONTH,[dateCome],getdate()) between 8 and 12 then'עונה קודמת'
-else 'עונות קודמת'
-end 'arivial'
- from[dbo].[dresses] 
- --הצגת רק שמלות שהקטגוריה  והמחיר מתאימים לדרישות הלקוח
- where @kategory1=[ktId]or @kategory2=[ktId]or @kategory3=[ktId] and (@price between ([dressPrice]-1000) and ([dressPrice]+1000))
- end
+-- 1. Helper Function: temp
+ALTER FUNCTION temp(@kategory1 SMALLINT, @kategory2 SMALLINT, @kategory3 SMALLINT, @price SMALLINT) 
+RETURNS @t TABLE (
+    ktId SMALLINT, rowNumber SMALLINT, dressId SMALLINT, 
+    dressName VARCHAR(50), dressPrice SMALLINT, arrivalStatus VARCHAR(20)
+) AS
+BEGIN
+    -- If no categories are specified, return all dresses matching the price range
+    IF (@kategory1 IS NULL AND @kategory2 IS NULL AND @kategory3 IS NULL) 
+    BEGIN
+        INSERT INTO @t
+        SELECT [ktId], ROW_NUMBER() OVER(PARTITION BY [ktId] ORDER BY [dateCome] DESC),
+               [dressId], [dressName], [dressPrice],
+               CASE
+                   WHEN DATEDIFF(MONTH, [dateCome], GETDATE()) < 2 THEN 'New Release'
+                   WHEN DATEDIFF(MONTH, [dateCome], GETDATE()) BETWEEN 2 AND 4 THEN 'Trendy'
+                   WHEN DATEDIFF(MONTH, [dateCome], GETDATE()) BETWEEN 4 AND 8 THEN 'Relatively New'
+                   ELSE 'Previous Seasons'
+               END
+        FROM [dbo].[dresses] 
+        WHERE [dressPrice] BETWEEN (@price - 1000) AND (@price + 1000)
+    END
+    ELSE
+    BEGIN
+        INSERT INTO @t
+        SELECT [ktId], ROW_NUMBER() OVER(PARTITION BY [ktId] ORDER BY [dateCome] DESC),
+               [dressId], [dressName], [dressPrice],
+               CASE
+                   WHEN DATEDIFF(MONTH, [dateCome], GETDATE()) < 2 THEN 'New Release'
+                   WHEN DATEDIFF(MONTH, [dateCome], GETDATE()) BETWEEN 2 AND 4 THEN 'Trendy'
+                   WHEN DATEDIFF(MONTH, [dateCome], GETDATE()) BETWEEN 4 AND 8 THEN 'Relatively New'
+                   ELSE 'Previous Seasons'
+               END
+        FROM [dbo].[dresses] 
+        WHERE ([ktId] IN (@kategory1, @kategory2, @kategory3)) 
+          AND ([dressPrice] BETWEEN (@price - 1000) AND (@price + 1000))
+    END
+    RETURN 
+END
+GO
 
- return 
- end
+-- 2. Main Function: favoriteDress
+ALTER FUNCTION [dbo].[favoriteDress](@date DATE, @kategory1 SMALLINT, @kategory2 SMALLINT, @kategory3 SMALLINT, @price SMALLINT) 
+RETURNS @t TABLE (
+    ktId SMALLINT, rowNumber SMALLINT, dressId SMALLINT, 
+    dressName VARCHAR(50), dressPrice SMALLINT, arrivalStatus VARCHAR(20)
+) AS
+BEGIN
+    -- Fetch potential dresses from helper function
+    INSERT INTO @t
+    SELECT * FROM dbo.temp(@kategory1, @kategory2, @kategory3, @price)
 
-----------------------------------הפונקציה הראשית 
-alter function [dbo].[favoriteDress](@date date ,@kategory1 smallint
-,@kategory2 smallint,@kategory3 smallint,@price smallint)returns @t table
-(ktId smallint,
-rowNumber smallint,
-dressId smallint,
-dressName varchar(50),
-dressPrice smallint,
-arivial varchar(20)
-) as
-begin
+    -- Filter out dresses that are already booked or unavailable
+    -- Criteria: Must be 15 days after previous event, and used no more than 3 times total.
+    DELETE FROM @t WHERE dressId IN (
+        SELECT [dbo].[dresses].[dressId]
+        FROM [dbo].[BridesDetails] JOIN [dbo].[orders] 
+        ON [dbo].[BridesDetails].[BrideId] = [dbo].[orders].[BrideId]
+        JOIN [dbo].[dresses] ON [dbo].[dresses].[dressId] = [dbo].[orders].[dressId]
+        WHERE @date < DATEADD(DAY, 15, [DateEven]) 
+        OR [dbo].[orders].[dressId] IN (SELECT [dressId] FROM [dbo].[orders] GROUP BY [dressId] HAVING COUNT([dressId]) > 3)
+    )
+    RETURN
+END
+GO
 
-insert into @t
------ הפונקציה שולחת לפונקצית עזר
--- כדי שכשלא יוכנסו קטגוריות יוצגו כל השמלות המתיאמות למחיר ולתאריך  
-select * from dbo.temp(@kategory1,@kategory2 ,@kategory3 ,@price )
+-----------------------------------------------------------------------------------------
+-- VIEW SECTION
+-----------------------------------------------------------------------------------------
 
---הפןנקציה מסננת את השמלות שאינן פנויות בתאריך שהוכנס 
- except 
-( select [ktId], ROW_NUMBER()
-over(partition by[ktId]order by[dateCome]desc)rowNumber,[dbo].[dresses].[dressId],[dressName],[dressPrice],'arivial'
-from[dbo].[BridesDetails]join[dbo].[orders] 
- on[dbo].[BridesDetails].[BrideId]=[dbo].[orders].[BrideId]
- join [dbo].[dresses]
- on [dbo].[dresses].[dressId]=[dbo].[orders].[dressId]
- 
-  
- --  לא ניתן לקחת שמלה עד חמישה עשרה ימים מהארוע הקודם
- where  @date<DATEADD(day,15,[DateEven]) 
- --הפונקציה לא תציג שמלות שנלקחו יותר מ3 פעמים
- or[dbo].[orders].[dressId] in (select [dressId] from [dbo].[orders]group by [dressId] having count([dressId])>3 )
- )
-return
-end
+--- View: takenToday
+--- Description: Monitors daily inventory movements.
+--- 1. Displays dresses scheduled for pickup today.
+--- 2. Displays dresses overdue for return (more than 1 day after the wedding).
 
--------------שורת הרצה
- ---select * from dbo.favoriteDress(תאריך,קט1,קט2,קט3,מחיר)
- --------------- חובה להכניס תאריך ומחיר
- ---------------------------------------------view------------------------------
--------------מציג את השמלות שאמורות להילקח היום- יש לכלה תור לקיחה 
-------------מציג את השמלות שעבר שבוע מתאריך החתונה ועוד לא הוחזרו
- create view [dbo].[takenToday] as(
-select [dbo].[BridesDetails].[BrideId],[BrideName],[BridePhone],[DressId],'לקחת'as'לקיחה/החזרה',[pay]as'?שולם'
-from [dbo].[BridesDetails] join [dbo].[orders]
-on [dbo].[BridesDetails].[BrideId]=[dbo].[orders].[BrideId]
-join
-(select * from [dbo].[turns] where [date]=getdate() and [type]='לקחת')q1
-on [dbo].[BridesDetails].[BrideId]=q1.brideId 
-where  [DateTake]  is null 
-union
-select [dbo].[BridesDetails].[BrideId],[BrideName],[BridePhone],[DressId],'יש להחזיר'as'לקיחה/החזרה',[pay]as'?שולם'
-from [dbo].[BridesDetails] join [dbo].[orders]
-on [dbo].[BridesDetails].[BrideId]=[dbo].[orders].[BrideId]
- where datediff(day,[DateEven],getdate())>=1  and  [DateReturn] is null
- )
- -------------שורת הרצה
- select * from takenToday
+CREATE VIEW [dbo].[takenToday] AS (
+    SELECT b.[BrideId], [BrideName], [BridePhone], [DressId], 'Pickup' AS 'Action', [pay] AS 'IsPaid'
+    FROM [dbo].[BridesDetails] b JOIN [dbo].[orders] o ON b.[BrideId] = o.[BrideId]
+    JOIN (SELECT * FROM [dbo].[turns] WHERE [date] = CAST(GETDATE() AS DATE) AND [type] = 'Pickup') AS q1
+    ON b.[BrideId] = q1.brideId 
+    WHERE [DateTake] IS NULL 
+    
+    UNION
+    
+    SELECT b.[BrideId], [BrideName], [BridePhone], [DressId], 'Overdue Return' AS 'Action', [pay] AS 'IsPaid'
+    FROM [dbo].[BridesDetails] b JOIN [dbo].[orders] o ON b.[BrideId] = o.[BrideId]
+    WHERE DATEDIFF(DAY, [DateEven], GETDATE()) >= 1 AND [DateReturn] IS NULL
+)
+GO
