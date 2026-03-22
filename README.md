@@ -48,7 +48,7 @@ The project includes a Daily Logistics View designed for floor managers. It cons
 
 ## Deployment
 1. Execute the Schema script to initialize the DB and file structures.
-2. Run the Table & Data script to populate the catalog.
-3. Run the Business Logic script to compile triggers and procedures.
+2. Run the Table_and_data Data script to populate the catalog.
+3. Run the  Logic_and_queries script to compile triggers and procedures.
 4. Execute EXEC updateTurns NULL to generate the initial appointment matrix.
 
